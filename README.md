@@ -18,7 +18,11 @@ These scripts are designed to manage static DHCP mappings on a pfSense firewall 
 ## `add_dhcp_static.php`
 
 ### Description
-This script reads a CSV file containing DHCP static assignments and adds them to the pfSense DHCP server.
+* This script reads a CSV file containing DHCP static assignments and adds them to the pfSense DHCP server.
+* It is capable of **properly adding** static entries into different DHCP interface scopes.
+* This is useful when moving a group of DHCP static assignments from one VLAN to another because this can't be done from the Web GUI.
+* This can override the limitation within the Web GUI which does not allow you to create a static assignment within the reservation pool.
+* * Be aware that you will not be able to then edit this entry from within the Web GUI because it will error out because it does not allow for these types of entries.
 
 ### CSV Format
 The CSV file should have the following header and format:
