@@ -1,9 +1,16 @@
 <?php
-require_once("config.inc");
+$want_debug_mode = false;
+if ($want_debug_mode) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+}
+
+require_once("/etc/inc/config.inc");
 require_once("functions.inc");
 require_once("util.inc");
 require_once("interfaces.inc");
-require_once("services.inc"); // Required for services_dhcpd_configure()
+require_once("services.inc");
 
 // Ensure a CSV file path is provided as an argument
 if ($argc < 2) {
@@ -11,6 +18,9 @@ if ($argc < 2) {
 }
 
 $csv_file = $argv[1]; // Get file path from command-line argument
+echo "Starting DHCP static mapping import...\n";
+echo "CSV file: $csv_file\n";
+flush();
 
 // Check if file exists and is readable
 if (!file_exists($csv_file) || !is_readable($csv_file)) {
@@ -18,9 +28,9 @@ if (!file_exists($csv_file) || !is_readable($csv_file)) {
 }
 
 // Function to check if an IP address already has a static assignment
-function ip_exists($ipaddr) {
+function ip_exists($ipaddr, $interface) {
     global $config;
-    foreach ($config['dhcpd']['lan']['staticmap'] as $entry) {
+    foreach ($config['dhcpd'][$interface]['staticmap'] as $entry) {
         if ($entry['ipaddr'] === $ipaddr) {
             return true;
         }
@@ -29,9 +39,9 @@ function ip_exists($ipaddr) {
 }
 
 // Function to check if a MAC address already has a static assignment
-function mac_exists($mac) {
+function mac_exists($mac, $interface) {
     global $config;
-    foreach ($config['dhcpd']['lan']['staticmap'] as $entry) {
+    foreach ($config['dhcpd'][$interface]['staticmap'] as $entry) {
         if (strcasecmp($entry['mac'], $mac) == 0) { // Case-insensitive MAC comparison
             return true;
         }
@@ -40,15 +50,46 @@ function mac_exists($mac) {
 }
 
 // Function to check if a hostname already has a static assignment
-function hostname_exists($hostname) {
+function hostname_exists($hostname, $interface) {
     global $config;
-    foreach ($config['dhcpd']['lan']['staticmap'] as $entry) {
+    foreach ($config['dhcpd'][$interface]['staticmap'] as $entry) {
         if (!empty($entry['hostname']) && strcasecmp($entry['hostname'], $hostname) == 0) {
             return true;
         }
     }
     return false;
 }
+
+// Get interface subnets
+$interface_subnets = [];
+foreach ($config['dhcpd'] as $interface => $dhcp_config) {
+    if (isset($config['interfaces'][$interface]['ipaddr']) && isset($config['interfaces'][$interface]['subnet'])) {
+        $interface_subnets[$interface] = [
+            'ip' => $config['interfaces'][$interface]['ipaddr'],
+            'mask' => $config['interfaces'][$interface]['subnet']
+        ];
+    }
+}
+
+// Return true when give IP address resides inside the given subnet/mask
+function is_ip_in_subnet($ip, $subnet, $mask) {
+    $ip_long = ip2long($ip);
+    $subnet_long = ip2long($subnet);
+    $mask_long = ~((1 << (32 - $mask)) - 1); // Create subnet mask in long format
+
+    return ($ip_long & $mask_long) === ($subnet_long & $mask_long);
+}
+
+// Function to find the correct interface for a given IP
+function find_interface_for_ip($ip, $interface_subnets) {
+    foreach ($interface_subnets as $interface => ['ip' => $subnet, 'mask' => $mask]) {
+        if (is_ip_in_subnet($ip, $subnet, $mask)) {
+            return $interface;
+        }
+    }
+    return null;
+}
+
 
 // Read CSV file
 $handle = fopen($csv_file, "r");
@@ -81,18 +122,25 @@ while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
         continue;
     }
 
+    // determine which interface to use for DHCP scope
+    $interface = find_interface_for_ip($ipaddr, $interface_subnets);
+    if (!$interface) {
+        fwrite(STDERR, "Skipping: No matching interface found for IP $ipaddr\n");
+        continue;
+    }
+
     // Check if IP, MAC, or Hostname already exist
-    if (ip_exists($ipaddr)) {
+    if (ip_exists($ipaddr, $interface)) {
         echo "Skipping: IP address $ipaddr is already assigned.\n";
         $skipped++;
         continue;
     }
-    if (mac_exists($mac)) {
+    if (mac_exists($mac, $interface)) {
         echo "Skipping: MAC address $mac is already assigned.\n";
         $skipped++;
         continue;
     }
-    if (hostname_exists($hostname)) {
+    if (hostname_exists($hostname, $interface)) {
         echo "Skipping: Hostname $hostname is already assigned.\n";
         $skipped++;
         continue;
@@ -106,7 +154,8 @@ while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
     $staticmap['descr'] = $description;
 
     // Add entry to pfSense DHCP config
-    $config['dhcpd']['lan']['staticmap'][] = $staticmap;
+    $config['dhcpd'][$interface]['staticmap'][] = $staticmap;
+    echo "Added: $ipaddr for MAC $mac on interface $interface\n";
     $count++;
 }
 
