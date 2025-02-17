@@ -22,7 +22,7 @@ These scripts are designed to manage static DHCP mappings on a pfSense firewall 
 * It is capable of **properly adding** static entries into different DHCP interface scopes.
 * * This can be useful when moving a group of DHCP static assignments from one VLAN to another as this can't easily be done from the Web GUI.
 * When using the `--allow` switch, you can override the limitation within the Web GUI which does not allow you to create a static assignment within the reservation pool.
-* * Be aware that you will **not** be able to then edit this entry from within the Web GUI as it will error out because this it doesn't allow for these types of entries.
+* * **WARNING:** Be aware that you will not be able to then edit this entry from within the Web GUI as it doesn't allow for static entries inside the reservation scope.
 
 ### CSV Format
 The CSV file should have the following header and format:
