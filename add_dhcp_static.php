@@ -17,7 +17,14 @@ if ($argc < 2) {
     die("Usage: php add_dhcp_static.php <path_to_csv_file>\n");
 }
 
-$csv_file = $argv[1]; // Get file path from command-line argument
+// Check for the --allow flag
+$n=1;
+$allow_in_range = in_array('--allow', $argv);
+if($allow_in_range) {
+    $n++;
+}
+
+$csv_file = $argv[$n]; // Get file path from command-line argument
 echo "Starting DHCP static mapping import...\n";
 echo "CSV file: $csv_file\n";
 flush();
@@ -69,6 +76,12 @@ foreach ($config['dhcpd'] as $interface => $dhcp_config) {
             'mask' => $config['interfaces'][$interface]['subnet']
         ];
     }
+}
+
+// Function to check if an IP falls within a DHCP range
+function is_ip_in_range($ip, $range_start, $range_end) {
+    $ip_long = ip2long($ip);
+    return ($ip_long >= ip2long($range_start) && $ip_long <= ip2long($range_end));
 }
 
 // Return true when give IP address resides inside the given subnet/mask
@@ -126,6 +139,7 @@ while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
     $interface = find_interface_for_ip($ipaddr, $interface_subnets);
     if (!$interface) {
         fwrite(STDERR, "Skipping: No matching interface found for IP $ipaddr\n");
+        $skipped++;
         continue;
     }
 
@@ -144,6 +158,19 @@ while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
         echo "Skipping: Hostname $hostname is already assigned.\n";
         $skipped++;
         continue;
+    }
+
+    // Get the DHCP range for this interface
+    $dhcp_range = $config['dhcpd'][$interface]['range'] ?? null;
+    if ($dhcp_range && !$allow_in_range) {
+        $range_start = $dhcp_range['from'];
+        $range_end = $dhcp_range['to'];
+
+        if (is_ip_in_range($ipaddr, $range_start, $range_end)) {
+            echo "Skipping: IP $ipaddr falls within the DHCP range ($range_start - $range_end) and --allow was not provided.\n";
+            $skipped++;
+            continue;
+        }
     }
 
     // Create static mapping entry
